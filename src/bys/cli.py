@@ -1,5 +1,6 @@
 import argparse
 import sys
+from datetime import datetime, timezone
 
 from googleapiclient.errors import HttpError
 
@@ -9,6 +10,7 @@ from bys.db import connect, load_index
 from bys.embed import Embedder
 from bys.search import top_matches
 from bys.sync import sync
+from bys.youtube import Failure
 
 RECENT_TITLES_SHOWN = 3
 
@@ -46,7 +48,22 @@ def main(argv: list[str] | None = None) -> int:
 def _sync(paths: Paths) -> int:
     result = sync(paths)
     print(f"Synced {result.channels} channels, re-embedded {result.reembedded}.")
+    if result.failures:
+        _log_failures(paths, result.failures)
+        print(
+            f"{len(result.failures)} failed (logged to {paths.failures_log}):",
+            file=sys.stderr,
+        )
+        for failure in result.failures:
+            print(f"  - {failure.subject}: {failure.reason}", file=sys.stderr)
     return 0
+
+
+def _log_failures(paths: Paths, failures: list[Failure]) -> None:
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with paths.failures_log.open("a") as log:
+        for failure in failures:
+            log.write(f"{stamp}\t{failure.subject}\t{failure.reason}\n")
 
 
 def _search(paths: Paths, query: str, limit: int) -> int:

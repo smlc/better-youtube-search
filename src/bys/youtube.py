@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 UNAVAILABLE_TITLES = {"Deleted video", "Private video"}
 
@@ -13,6 +14,12 @@ class Channel:
     title: str
     description: str
     uploads_playlist_id: str | None
+
+
+@dataclass(frozen=True)
+class Failure:
+    subject: str
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -33,17 +40,24 @@ def list_subscribed_channel_ids(client: Any) -> list[str]:
     return [item["snippet"]["resourceId"]["channelId"] for item in items]
 
 
-def fetch_channels(client: Any, channel_ids: list[str]) -> list[Channel]:
+def fetch_channels(client: Any, channel_ids: list[str]) -> tuple[list[Channel], list[Failure]]:
     channels = []
+    failures = []
     for batch in _batches(channel_ids, 50):
-        response = (
-            client.channels()
-            .list(part="snippet,contentDetails", id=",".join(batch), maxResults=50)
-            .execute()
-        )
+        try:
+            response = (
+                client.channels()
+                .list(part="snippet,contentDetails", id=",".join(batch), maxResults=50)
+                .execute()
+            )
+        except Exception as error:
+            failures.extend(Failure(channel_id, describe_error(error)) for channel_id in batch)
+            continue
+        returned_ids = set()
         for item in response.get("items", []):
             snippet = item["snippet"]
             related = item.get("contentDetails", {}).get("relatedPlaylists", {})
+            returned_ids.add(item["id"])
             channels.append(
                 Channel(
                     id=item["id"],
@@ -52,21 +66,37 @@ def fetch_channels(client: Any, channel_ids: list[str]) -> list[Channel]:
                     uploads_playlist_id=related.get("uploads"),
                 )
             )
-    return channels
+        failures.extend(
+            Failure(channel_id, "not returned by the YouTube API")
+            for channel_id in batch
+            if channel_id not in returned_ids
+        )
+    return channels, failures
+
+
+def describe_error(error: Exception) -> str:
+    if isinstance(error, HttpError):
+        return f"HTTP {error.resp.status}: {error.reason}"
+    return f"{type(error).__name__}: {error}"
 
 
 def fetch_recent_videos(client: Any, channel: Channel, limit: int = 5) -> list[Video]:
     if not channel.uploads_playlist_id:
         return []
-    response = (
-        client.playlistItems()
-        .list(
-            part="snippet,contentDetails",
-            playlistId=channel.uploads_playlist_id,
-            maxResults=limit,
+    try:
+        response = (
+            client.playlistItems()
+            .list(
+                part="snippet,contentDetails",
+                playlistId=channel.uploads_playlist_id,
+                maxResults=limit,
+            )
+            .execute()
         )
-        .execute()
-    )
+    except HttpError as error:
+        if error.resp.status == 404:
+            return []
+        raise
     videos = []
     for item in response.get("items", []):
         snippet = item["snippet"]

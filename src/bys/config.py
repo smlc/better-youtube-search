@@ -23,6 +23,10 @@ class Paths:
     def db(self) -> Path:
         return self.home / "bys.db"
 
+    @property
+    def failures_log(self) -> Path:
+        return self.home / "sync-failures.log"
+
 
 def default_paths() -> Paths:
     home = Path(os.environ.get("BYS_HOME", Path.home() / ".bys")).expanduser()
