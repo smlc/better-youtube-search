@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bys sync, explained</title>
+<style>
+  :root {
+    --bg: #f7f8fb;
+    --panel: #ffffff;
+    --ink: #1c2230;
+    --muted: #5d6679;
+    --line: #e2e6ef;
+    --accent: #4f46e5;
+    --api: #e11d48;
+    --db: #0284c7;
+    --profile: #059669;
+    --model: #7c3aed;
+    --code-bg: #0f172a;
+    --code-ink: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 24px; }
+  body {
+    margin: 0;
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  .layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: 100vh; }
+  aside {
+    position: sticky; top: 0; height: 100vh; overflow-y: auto;
+    padding: 28px 18px; background: var(--panel); border-right: 1px solid var(--line);
+  }
+  aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 10px; }
+  aside a {
+    display: block; padding: 6px 10px; border-radius: 8px; color: var(--ink);
+    text-decoration: none; font-size: 14px;
+  }
+  aside a:hover { background: var(--bg); }
+  aside .sub { padding-left: 22px; font-size: 13px; color: var(--muted); }
+  main { padding: 36px clamp(20px, 4vw, 56px) 80px; max-width: 1100px; }
+  section { margin-bottom: 64px; }
+  h1 { font-size: 34px; margin: 0 0 8px; letter-spacing: -.02em; }
+  h2 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.01em; }
+  h2 + .lead { color: var(--muted); margin-top: 0; font-size: 17px; }
+  h3 { font-size: 19px; margin: 0; }
+  h4 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 6px; }
+  p { margin: 10px 0; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13.5px; }
+  code { background: #eef1f7; padding: 1px 6px; border-radius: 5px; }
+  pre {
+    background: var(--code-bg); color: var(--code-ink); padding: 16px 18px;
+    border-radius: 12px; overflow-x: auto; line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    padding: 22px 24px; margin: 16px 0; box-shadow: 0 1px 2px rgba(16,24,40,.04);
+  }
+  .glance { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin: 22px 0; }
+  .glance .card { margin: 0; }
+  .big { font-size: 28px; font-weight: 700; letter-spacing: -.02em; }
+  .muted { color: var(--muted); }
+  .tag {
+    display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 9px;
+    border-radius: 999px; color: #fff; vertical-align: middle; margin-left: 8px;
+  }
+  .tag.api { background: var(--api); }
+  .tag.db { background: var(--db); }
+  .tag.profile { background: var(--profile); }
+  .tag.model { background: var(--model); }
+
+  /* Pipeline overview */
+  .pipeline { list-style: none; padding: 0; margin: 22px 0; display: flex; flex-wrap: wrap; gap: 10px; counter-reset: n; }
+  .pipeline li { flex: 1 1 150px; }
+  .pipeline a {
+    display: block; height: 100%; text-decoration: none; color: var(--ink);
+    background: var(--panel); border: 2px solid var(--line); border-radius: 12px;
+    padding: 12px 14px; font-size: 14px; font-weight: 600; transition: transform .15s, box-shadow .15s;
+  }
+  .pipeline a:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(16,24,40,.08); }
+  .pipeline a::before { counter-increment: n; content: counter(n); display: block; font-size: 12px; color: var(--muted); font-weight: 700; }
+  .pipeline li.api a { border-color: var(--api); }
+  .pipeline li.db a { border-color: var(--db); }
+  .pipeline li.profile a { border-color: var(--profile); }
+  .pipeline li.model a { border-color: var(--model); }
+  .pipeline a.active { box-shadow: 0 0 0 4px rgba(79,70,229,.25); }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 14px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: middle; }
+  .legend .api::before { background: var(--api); }
+  .legend .db::before { background: var(--db); }
+  .legend .profile::before { background: var(--profile); }
+  .legend .model::before { background: var(--model); }
+
+  /* Phase bands */
+  .phases { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-top: 18px; }
+  .phase { border-radius: 14px; padding: 16px 18px; color: #fff; }
+  .phase h3 { font-size: 17px; margin-bottom: 6px; }
+  .phase p { margin: 0; font-size: 14px; opacity: .95; }
+  .phase.api { background: var(--api); }
+  .phase.db { background: var(--db); }
+  .phase.profile { background: var(--profile); }
+  .phase.model { background: var(--model); }
+
+  /* Steps */
+  .step { scroll-margin-top: 24px; }
+  .step header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .num {
+    width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center;
+    background: var(--ink); color: #fff; font-weight: 700; flex: none;
+  }
+  .step.api .num { background: var(--api); }
+  .step.db .num { background: var(--db); }
+  .step.profile .num { background: var(--profile); }
+  .step.model .num { background: var(--model); }
+  .step.target { outline: 3px solid rgba(79,70,229,.35); }
+  dl.facts { display: grid; grid-template-columns: 110px 1fr; gap: 8px 14px; margin: 16px 0; font-size: 15px; }
+  dl.facts dt { color: var(--muted); font-weight: 600; }
+  dl.facts dd { margin: 0; }
+  .split { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-top: 12px; }
+  .box { background: var(--bg); border-radius: 12px; padding: 14px 16px; font-size: 15px; }
+  .box p { margin: 4px 0; }
+  .box ul { margin: 4px 0 0 18px; padding: 0; }
+  .step-nav { display: flex; justify-content: space-between; margin-top: 16px; font-size: 14px; }
+  .step-nav a { color: var(--accent); text-decoration: none; font-weight: 600; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; font-size: 15px; margin: 12px 0; background: var(--panel); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: #f1f4fa; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  tr:last-child td { border-bottom: none; }
+  td.num-col, th.num-col { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* ER diagram */
+  .diagram { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; overflow-x: auto; }
+  .diagram svg { width: 100%; height: auto; min-width: 640px; display: block; }
+  .diagram text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; fill: var(--ink); }
+  .diagram .t { font-family: -apple-system, sans-serif; font-size: 15px; font-weight: 700; }
+  .diagram .pk { font-weight: 700; fill: var(--db); }
+  .diagram .fk { fill: var(--model); }
+  .diagram .lbl { font-size: 13px; font-weight: 700; fill: var(--muted); }
+
+  /* Flow diagrams in text */
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; }
+  .flow .node { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; font-size: 14px; }
+  .flow .node.yes { background: #ecfdf5; border-color: #a7f3d0; }
+  .flow .node.no { background: #fff1f2; border-color: #fecdd3; }
+  .flow .arrow { color: var(--muted); font-weight: 700; }
+
+  .callout { border-left: 4px solid var(--accent); background: #f1f0ff; padding: 12px 16px; border-radius: 0 12px 12px 0; margin: 14px 0; font-size: 15px; }
+  .callout.warn { border-color: var(--api); background: #fff1f2; }
+  .example-table { font-size: 14px; }
+
+  footer { color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 18px; }
+
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; }
+    aside { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<aside>
+  <h2>bys sync</h2>
+  <a href="#overview">Overview</a>
+  <a href="#pipeline">The pipeline</a>
+  <a href="#steps">Step by step</a>
+  <a class="sub" href="#step-1">1 Load credentials</a>
+  <a class="sub" href="#step-2">2 List subscriptions</a>
+  <a class="sub" href="#step-3">3 Channel details</a>
+  <a class="sub" href="#step-4">4 Drop unsubscribed</a>
+  <a class="sub" href="#step-5">5 Recent uploads</a>
+  <a class="sub" href="#step-6">6 Save per channel</a>
+  <a class="sub" href="#step-7">7 Build profile</a>
+  <a class="sub" href="#step-8">8 Detect changes</a>
+  <a class="sub" href="#step-9">9 Embed</a>
+  <a class="sub" href="#step-10">10 Save vectors</a>
+  <a href="#api">YouTube API calls</a>
+  <a href="#schema">Database schema</a>
+  <a href="#example">Worked example</a>
+  <a href="#rerun">Re-runs</a>
+  <a href="#failures">Failure handling</a>
+  <a href="#profile-rules">Profile rules</a>
+  <a href="#glossary">Glossary</a>
+</aside>
+
+<main>
+
+<section id="overview">
+  <h1>How <code>bys sync</code> works</h1>
+  <p class="lead">Sync copies your YouTube subscriptions into a local database, describes each channel in plain text, and turns that text into a vector so search can compare it with your query.</p>
+
+  <div class="glance">
+    <div class="card"><h4>Runs</h4><div class="big">~520</div><p class="muted">API units for 500 subscriptions, out of 10,000 per day</p></div>
+    <div class="card"><h4>Stores</h4><div class="big">3 tables</div><p class="muted"><code>channels</code>, <code>videos</code>, <code>embeddings</code> in one SQLite file</p></div>
+    <div class="card"><h4>Embeds</h4><div class="big">384 numbers</div><p class="muted">per channel, from a small local model. Nothing is sent to an AI service.</p></div>
+    <div class="card"><h4>Fails</h4><div class="big">per channel</div><p class="muted">one broken channel is logged and skipped, the rest still sync</p></div>
+  </div>
+
+  <p>There are two layers. The <strong>network layer</strong> asks YouTube what you subscribe to and what each channel uploaded. The <strong>local layer</strong> stores that data, turns it into text, and embeds the text. Sync touches the network first, then does all the rest on your machine.</p>
+
+  <h4>What a run looks like in the terminal</h4>
+  <pre><code>$ uv run bys sync
+Found 3 subscriptions
+[1/3] Gopher Academy
+[2/3] Karting Pro
+  failed: HTTP 403: forbidden
+[3/3] Rustacean Station
+Embedding 2 changed channels
+Synced 2 channels, re-embedded 2.
+1 failed (logged to /Users/you/.bys/sync-failures.log):
+  - Karting Pro (UCxxxx): HTTP 403: forbidden</code></pre>
+  <p class="muted">Illustrative output. The lines match the messages in <code>src/bys/sync.py</code> and <code>src/bys/cli.py</code>.</p>
+</section>
+
+<section id="pipeline">
+  <h2>The pipeline</h2>
+  <p class="lead">Ten steps. Click a box to jump to its explanation.</p>
+
+  <ol class="pipeline">
+    <li class="api"><a href="#step-1">Load credentials</a></li>
+    <li class="api"><a href="#step-2">List subscriptions</a></li>
+    <li class="api"><a href="#step-3">Channel details</a></li>
+    <li class="db"><a href="#step-4">Drop unsubscribed</a></li>
+    <li class="api"><a href="#step-5">Recent uploads</a></li>
+    <li class="db"><a href="#step-6">Save per channel</a></li>
+    <li class="profile"><a href="#step-7">Build profile</a></li>
+    <li class="db"><a href="#step-8">Detect changes</a></li>
+    <li class="model"><a href="#step-9">Embed</a></li>
+    <li class="db"><a href="#step-10">Save vectors</a></li>
+  </ol>
+
+  <div class="legend">
+    <span class="api">YouTube API</span>
+    <span class="db">SQLite</span>
+    <span class="profile">Profile text</span>
+    <span class="model">Embedding model</span>
+  </div>
+
+  <div class="phases">
+    <div class="phase api"><h3>1. Ask YouTube</h3><p>Steps 1, 2, 3 and 5. Read-only calls to the YouTube Data API.</p></div>
+    <div class="phase db"><h3>2. Store</h3><p>Steps 4, 6, 8 and 10. Writes and reads in the local SQLite file.</p></div>
+    <div class="phase profile"><h3>3. Describe</h3><p>Step 7. Combine the channel's name, description and recent titles into one text.</p></div>
+    <div class="phase model"><h3>4. Embed</h3><p>Step 9. Run the text through a small local model to get a vector.</p></div>
+  </div>
+
+  <h3 style="margin-top:28px">Order of work</h3>
+  <div class="flow">
+    <span class="node">Credentials</span><span class="arrow">→</span>
+    <span class="node">All subscriptions</span><span class="arrow">→</span>
+    <span class="node">Channel details (batches of 50)</span><span class="arrow">→</span>
+    <span class="node">Delete unsubscribed</span><span class="arrow">→</span>
+    <span class="node">For each channel: uploads, save, commit</span><span class="arrow">→</span>
+    <span class="node">Compare profiles</span><span class="arrow">→</span>
+    <span class="node">Embed changed only</span><span class="arrow">→</span>
+    <span class="node">Save vectors, commit</span>
+  </div>
+  <p>Everything before the embedding is a loop of small, independent units of work. Each channel is committed on its own, so a failure on one channel can't undo the others. The model runs once, in a single batch, at the end.</p>
+</section>
+
+<section id="steps">
+  <h2>Step by step</h2>
+  <p class="lead">The code for each step lives in <code>src/bys/</code>. Each card shows the function, what goes in and out, and what happens when it fails.</p>
+
+  <article class="card step api" id="step-1">
+    <header><span class="num">1</span><h3>Load credentials</h3><span class="tag api">YouTube API</span></header>
+    <dl class="facts">
+      <dt>Code</dt><dd><code>auth.load_credentials</code></dd>
+      <dt>Input</dt><dd><code>~/.bys/token.json</code>, written by <code>bys login</code></dd>
+      <dt>Output</dt><dd>Google credentials that can call the API</dd>
+      <dt>Cost</dt><dd>No API units</dd>
+    </dl>
+    <p>Reads the saved token. If the access token has expired, it uses the refresh token to get a new one and saves the file again. The sync then uses this login without asking you anything.</p>
+    <div class="split">
+      <div class="box"><h4>Why</h4><p>You log in once. Sync can run unattended, for example from cron.</p></div>
+      <div class="box"><h4>If it fails</h4><p>No token or an invalid one: sync stops with <em>“Run <code>bys login</code> again.”</em> Nothing is written.</p></div>
+    </div>
+    <nav class="step-nav"><a href="#pipeline">↑ Pipeline</a><a href="#step-2">Next: list subscriptions →</a></nav>
+  </article>
+
+  <article class="card step api" id="step-2">
+    <header><span class="num">2</span><h3>List subscriptions</h3><span class="tag api">YouTube API</span></header>
+    <dl class="facts">
+      <dt>Code</dt><dd><code>youtube.list_subscribed_channel_ids</code></dd>
+      <dt>Call</dt><dd><code>subscriptions.list(part=snippet, mine=true, maxResults=50)</code>, repeated while there is a <code>nextPageToken</code></dd>
+      <dt>Output</dt><dd>A list of channel IDs, such as <code>["UCczJ…", "UCabc…"]</code></dd>
+      <dt>Cost</dt><dd>1 unit per page, so 1 unit per 50 subscriptions</dd>
+    </dl>
+    <p>The API returns subscriptions 50 at a time. The helper <code>_paginate</code> keeps asking for the next page until the token is gone. The result is just IDs; the names come later.</p>
+    <div class="split">
+      <div class="box"><h4>Why</h4><p>This list is the source of truth for what you follow. Everything else is derived from it.</p></div>
+      <div class="box"><h4>If it fails</h4><p>The whole sync stops. Without this list there is nothing to do, so this is the only network call that is fatal.</p></div>
+    </div>
+    <nav class="step-nav"><a href="#step-1">← Load credentials</a><a href="#step-3">Next: channel details →</a></nav>
+  </article>
+
+  <article class="card step api" id="step-3">
+    <header><span class="num">3</span><h3>Fetch channel details</h3><span class="tag api">YouTube API</span></header>
+    <dl class="facts">
+      <dt>Code</dt><dd><code>youtube.fetch_channels</code></dd>
+      <dt>Call</dt><dd><code>channels.list(part=snippet,contentDetails, id=…50 IDs…)</code></dd>
+      <dt>Output</dt><dd>A <code>Channel</code> per ID: <code>id</code>, <code>title</code>, <code>description</code>, <code>uploads_playlist_id</code>, plus a list of <code>Failure</code>s</dd>
+      <dt>Cost</dt><dd>1 unit per call, 50 channels per call</dd>
+    </dl>
+    <p>The IDs from step 2 are split into batches of 50. Each batch gets one call that returns the channel name, description, and the ID of its uploads playlist. The uploads playlist is the key to step 5: it's a YouTube playlist that holds every public video of that channel, newest first.</p>
+    <div class="split">
+      <div class="box"><h4>Why batches</h4><p>One call for 50 channels instead of 50 calls. That keeps the quota use low.</p></div>
+      <div class="box"><h4>If it fails</h4><ul>
+        <li>A batch errors: all 50 IDs in it are logged as failures, the next batch runs.</li>
+        <li>An ID is missing from the response (deleted or terminated channel): logged as “not returned by the YouTube API”.</li>
+      </ul></div>
+    </div>
+    <nav class="step-nav"><a href="#step-2">← List subscriptions</a><a href="#step-4">Next: drop unsubscribed →</a></nav>
+  </article>
+
+  <article class="card step db" id="step-4">
+    <header><span class="num">4</span><h3>Drop unsubscribed channels</h3><span class="tag db">SQLite</span></header>
+    <dl class="facts">
+      <dt>Code</dt><dd><code>db.remove_unsubscribed</code></dd>
+      <dt>SQL</dt><dd><code>DELETE FROM channels WHERE id NOT IN (…subscribed IDs…)</code></dd>
+      <dt>Cost</dt><dd>No API units</dd>
+    </dl>
+    <p>Anything in the local database that is no longer in your subscription list is deleted. Because of the foreign keys (see the schema), the matching rows in <code>videos</code> and <code>embeddings</code> are deleted too.</p>
+    <div class="callout"><strong>Subtle point.</strong> The list used here is the IDs from step 2, not the channels that step 3 managed to fetch. If step 3 failed for a channel, the channel is still in your subscriptions, so it is not deleted. Otherwise a temporary API error would wipe good data.</div>
+    <nav class="step-nav"><a href="#step-3">← Channel details</a><a href="#step-5">Next: recent uploads →</a></nav>
+  </article>
+
+  <article class="card step api" id="step-5">
+    <header><span class="num">5</span><h3>Fetch recent uploads, per channel</h3><span class="tag api">YouTube API</span></header>
+    <dl class="facts">
+      <dt>Code</dt><dd><code>youtube.fetch_recent_videos</code></dd>
+      <dt>Call</dt><dd><code>playlistItems.list(part=snippet,contentDetails, playlistId=UU…, maxResults=5)</code></dd>
+      <dt>Output</dt><dd>Up to 5 <code>Video</code>s: <code>id</code>, <code>title</code>, <code>description</code>, <code>published_at</code></dd>
+      <dt>Cost</dt><dd>1 unit per channel. This is the biggest cost: 500 channels is 500 units.</dd>
+    </dl>
+    <p>For each channel, the code calls its uploads playlist and asks for the last 5 items. Videos titled <em>“Deleted video”</em> or <em>“Private video”</em> are removed. A channel without public uploads has no playlist, so the API returns 404; that is treated as “no videos”, not as an error.</p>
+    <div class="split">
+      <div class="box"><h4>Why only 5</h4><p>Enough to describe what a channel covers now. More videos would mean more units and more text to embed, with diminishing returns.</p></div>
+      <div class="box"><h4>If it fails</h4><ul>
+        <li>404 on the playlist: channel saved with no videos. Not a failure.</li>
+        <li>Any other error (for example 403): this channel is logged and skipped.</li>
+      </ul></div>
+    </div>
+    <nav class="step-nav"><a href="#step-4">← Drop unsubscribed</a><a href="#step-6">Next: save per channel →</a></nav>
+  </article>
+
+  <article class="card step db" id="step-6">
+    <header><span class="num">6</span><h3>Save each channel and its videos</h3><span class="tag db">SQLite</span></header>
+    <dl class="facts">
+      <dt>Code</dt><dd><code>db.save_channel</code>, called from <code>sync.sync_channels</code></dd>
+      <dt>SQL</dt><dd><code>INSERT … ON CONFLICT(id) DO UPDATE</code> for the channel, <code>DELETE</code> the old videos, then <code>INSERT</code> the new ones</dd>
+      <dt>Commit</dt><dd>After every channel</dd>
+    </dl>
+    <p>The channel row is inserted or updated. Its old videos are deleted and the five fresh ones are inserted. Then the transaction is committed. The videos table only ever holds the last 5 per channel, because the delete happens on every sync.</p>
+    <div class="split">
+      <div class="box"><h4>Why commit per channel</h4><p>If the sync crashes at channel 300, channels 1 to 299 are already saved. Re-running picks up the rest.</p></div>
+      <div class="box"><h4>If it fails</h4><p>The loop calls <code>rollback()</code>, which undoes only this channel's changes, logs the failure, and moves to the next channel.</p></div>
+    </div>
+    <nav class="step-nav"><a href="#step-5">← Recent uploads</a><a href="#step-7">Next: build profile →</a></nav>
+  </article>
+
+  <article class="card step profile" id="step-7">
+    <header><span class="num">7</span><h3>Build the profile text</h3><span class="tag profile">Profile</span></header>
+    <dl class="facts">
+      <dt>Code</dt><dd><code>profiles.build_profile</code></dd>
+      <dt>Input</dt><dd>One <code>Channel</code> and its <code>Video</code>s</dd>
+      <dt>Output</dt><dd>One string, at most 1500 characters</dd>
+      <dt>Cost</dt><dd>Local only</dd>
+    </dl>
+    <p>This is where a channel becomes text the model can read. The parts are added in this order: the channel name, the channel description, all recent titles, and then short snippets of each video description. URLs are removed and whitespace is collapsed. If the whole text is too long, the end is cut, so the snippets go first and the titles are kept.</p>
+    <p>The profile is what gets compared and what gets embedded. There is no other copy of the channel's meaning in the system.</p>
+    <p class="muted">A worked example, with real output, is in <a href="#example">the worked example</a>. The rules are in <a href="#profile-rules">profile rules</a>.</p>
+    <nav class="step-nav"><a href="#step-6">← Save per channel</a><a href="#step-8">Next: detect changes →</a></nav>
+  </article>
+
+  <article class="card step db" id="step-8">
+    <header><span class="num">8</span><h3>Detect changes</h3><span class="tag db">SQLite</span></header>
+    <dl class="facts">
+      <dt>Code</dt><dd><code>db.stored_profiles</code>, compared in <code>sync.sync</code></dd>
+      <dt>Read</dt><dd><code>SELECT channel_id, profile FROM embeddings</code></dd>
+      <dt>Output</dt><dd>The list of <em>pending</em> channels: new profile text differs from the stored one, or no stored profile</dd>
+      <dt>Cost</dt><dd>No API units, no model</dd>
+    </dl>
+    <p>Each profile from step 7 is compared with the profile stored at the last embedding. If they are the same, the channel keeps its vector. Only the different ones go to the model. This is what keeps a daily sync fast: most channels don't change from one day to the next.</p>
+    <nav class="step-nav"><a href="#step-7">← Build profile</a><a href="#step-9">Next: embed →</a></nav>
+  </article>
+
+  <article class="card step model" id="step-9">
+    <header><span class="num">9</span><h3>Embed the changed profiles</h3><span class="tag model">Model</span></header>
+    <dl class="facts">
+      <dt>Code</dt><dd><code>embed.Embedder.embed_documents</code></dd>
+      <dt>Model</dt><dd><code>BAAI/bge-small-en-v1.5</code>, run locally with <code>fastembed</code> (ONNX, no PyTorch)</dd>
+      <dt>Output</dt><dd>One vector per pending profile: 384 numbers, length 1</dd>
+      <dt>Cost</dt><dd>Local CPU time, no API cost</dd>
+    </dl>
+    <p>The pending profiles go to the model in one batch. The model turns each text into a list of 384 numbers that place it in “meaning space”: texts about similar things get vectors that point in similar directions. The vectors are normalized to length 1, so a dot product gives a similarity score between −1 and 1.</p>
+    <div class="split">
+      <div class="box"><h4>First run</h4><p>The model is downloaded once, about 130 MB, and cached. Later runs start in seconds.</p></div>
+      <div class="box"><h4>If it fails</h4><p>The model is not inside the per-channel loop, so an error here stops the sync. The profile and channel data from earlier steps have already been committed and stay in the database.</p></div>
+    </div>
+    <nav class="step-nav"><a href="#step-8">← Detect changes</a><a href="#step-10">Next: save vectors →</a></nav>
+  </article>
+
+  <article class="card step db" id="step-10">
+    <header><span class="num">10</span><h3>Save vectors and finish</h3><span class="tag db">SQLite</span></header>
+    <dl class="facts">
+      <dt>Code</dt><dd><code>db.save_embedding</code>, then <code>sync.sync</code> returns a <code>SyncResult</code></dd>
+      <dt>SQL</dt><dd><code>INSERT … ON CONFLICT(channel_id) DO UPDATE</code>; the vector is stored as 384 float32 values in a BLOB (1536 bytes)</dd>
+      <dt>Output</dt><dd>A <code>SyncResult</code>: channels synced, channels re-embedded, and the list of failures</dd>
+    </dl>
+    <p>Each vector is saved next to the profile text it came from, plus the model name. Storing the profile is what makes step 8 work on the next run. The final commit makes all changes visible at once. The CLI then prints the summary and appends any failures to <code>sync-failures.log</code>.</p>
+    <nav class="step-nav"><a href="#step-9">← Embed</a><a href="#api">YouTube API calls →</a></nav>
+  </article>
+</section>
+
+<section id="api">
+  <h2>YouTube API calls</h2>
+  <p class="lead">Only three endpoints are used, all read-only. The quota numbers come from the Google documentation.</p>
+  <table>
+    <thead><tr><th>Call</th><th>Used in</th><th class="num-col">Units per call</th><th>Items per call</th><th class="num-col">Calls for 500 subscriptions</th><th class="num-col">Units</th></tr></thead>
+    <tbody>
+      <tr><td><code>subscriptions.list</code></td><td>Step 2</td><td class="num-col">1</td><td>50</td><td class="num-col">10</td><td class="num-col">10</td></tr>
+      <tr><td><code>channels.list</code></td><td>Step 3</td><td class="num-col">1</td><td>50 channel IDs</td><td class="num-col">10</td><td class="num-col">10</td></tr>
+      <tr><td><code>playlistItems.list</code></td><td>Step 5</td><td class="num-col">1</td><td>5 videos</td><td class="num-col">500</td><td class="num-col">500</td></tr>
+      <tr><td><strong>Total</strong></td><td></td><td></td><td></td><td class="num-col"><strong>520</strong></td><td class="num-col"><strong>520</strong></td></tr>
+    </tbody>
+  </table>
+  <div class="callout">The default daily quota is 10,000 units, so a full sync uses about 5%. Sync never calls <code>search.list</code>, which is the expensive endpoint with its own small daily limit.</div>
+  <p>Calls are made one after another, not in parallel. That is slower, but it keeps the request rate predictable and makes the log easy to read in order.</p>
+</section>
+
+<section id="schema">
+  <h2>Database schema</h2>
+  <p class="lead">One SQLite file, <code>~/.bys/bys.db</code>, with three tables. Lines show the foreign keys.</p>
+
+  <div class="diagram">
+    <svg viewBox="0 0 720 430" role="img" aria-label="Entity relationship diagram">
+      <defs>
+        <marker id="crowN" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+          <path d="M0,0 L10,6 L0,12" fill="none" stroke="#5d6679" stroke-width="1.5"/>
+        </marker>
+      </defs>
+
+      <!-- channels -->
+      <g transform="translate(30,30)">
+        <rect width="270" height="168" rx="12" fill="#fff" stroke="#0284c7" stroke-width="2"/>
+        <rect width="270" height="34" rx="12" fill="#0284c7"/>
+        <rect y="22" width="270" height="12" fill="#0284c7"/>
+        <text class="t" x="14" y="23" fill="#fff">channels</text>
+        <text x="14" y="58"><tspan class="pk">PK</tspan>  id                   TEXT</text>
+        <text x="14" y="78">    title                TEXT</text>
+        <text x="14" y="98">    description          TEXT</text>
+        <text x="14" y="118">    uploads_playlist_id  TEXT</text>
+        <text x="14" y="138">    synced_at            TEXT</text>
+      </g>
+
+      <!-- videos -->
+      <g transform="translate(420,30)">
+        <rect width="270" height="168" rx="12" fill="#fff" stroke="#0284c7" stroke-width="2"/>
+        <rect width="270" height="34" rx="12" fill="#0284c7"/>
+        <rect y="22" width="270" height="12" fill="#0284c7"/>
+        <text class="t" x="14" y="23" fill="#fff">videos</text>
+        <text x="14" y="58"><tspan class="pk">PK</tspan>  id                   TEXT</text>
+        <text x="14" y="78"><tspan class="fk">FK</tspan>  channel_id           TEXT</text>
+        <text x="14" y="98">    title                TEXT</text>
+        <text x="14" y="118">    description          TEXT</text>
+        <text x="14" y="138">    published_at         TEXT</text>
+      </g>
+
+      <!-- embeddings -->
+      <g transform="translate(30,250)">
+        <rect width="270" height="150" rx="12" fill="#fff" stroke="#7c3aed" stroke-width="2"/>
+        <rect width="270" height="34" rx="12" fill="#7c3aed"/>
+        <rect y="22" width="270" height="12" fill="#7c3aed"/>
+        <text class="t" x="14" y="23" fill="#fff">embeddings</text>
+        <text x="14" y="58"><tspan class="pk">PK</tspan>  <tspan class="fk">FK</tspan> channel_id     TEXT</text>
+        <text x="14" y="78">    profile              TEXT</text>
+        <text x="14" y="98">    model                TEXT</text>
+        <text x="14" y="118">    vector               BLOB</text>
+      </g>
+
+      <!-- relation: channels 1 -> N videos -->
+      <line x1="300" y1="114" x2="420" y2="114" stroke="#5d6679" stroke-width="1.6" marker-end="url(#crowN)"/>
+      <text class="lbl" x="338" y="106">1</text>
+      <text class="lbl" x="398" y="106">N</text>
+      <text class="muted" x="300" y="136" font-size="12" fill="#5d6679">ON DELETE CASCADE</text>
+
+      <!-- relation: channels 1 -> 0..1 embeddings -->
+      <line x1="165" y1="198" x2="165" y2="250" stroke="#5d6679" stroke-width="1.6" marker-end="url(#crowN)"/>
+      <text class="lbl" x="172" y="236">1</text>
+      <text x="176" y="228" font-size="12" fill="#5d6679">ON DELETE CASCADE</text>
+
+      <!-- legend -->
+      <g transform="translate(420,250)" font-size="13" fill="#5d6679">
+        <text x="0" y="16" font-weight="700" fill="#1c2230">Keys</text>
+        <text x="0" y="40"><tspan class="pk">PK</tspan>  primary key, one row per ID</text>
+        <text x="0" y="62"><tspan class="fk">FK</tspan>  foreign key, points at another table's PK</text>
+        <text x="0" y="96" font-weight="700" fill="#1c2230">Relations</text>
+        <text x="0" y="118">one channel → many videos (at most 5 kept)</text>
+        <text x="0" y="140">one channel → at most one embedding</text>
+        <text x="0" y="170" font-size="12">Deleting a channel deletes its videos and embedding.</text>
+      </g>
+    </svg>
+  </div>
+
+  <h3 style="margin-top:28px">The SQL behind it</h3>
+  <p class="muted">From <code>src/bys/db.py</code>. Read it as the source of truth.</p>
+  <pre><code>CREATE TABLE IF NOT EXISTS channels (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    uploads_playlist_id TEXT,
+    synced_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS videos (
+    id TEXT PRIMARY KEY,
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    published_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS videos_channel_id ON videos(channel_id);
+CREATE TABLE IF NOT EXISTS embeddings (
+    channel_id TEXT PRIMARY KEY REFERENCES channels(id) ON DELETE CASCADE,
+    profile TEXT NOT NULL,
+    model TEXT NOT NULL,
+    vector BLOB NOT NULL
+);</code></pre>
+
+  <h3>What is not stored</h3>
+  <ul>
+    <li><strong>Subscriptions as their own table.</strong> The <code>channels</code> table <em>is</em> the subscription list. Each row exists because you subscribe to it; step 4 removes the rest.</li>
+    <li><strong>Full video history.</strong> Only the last 5 per channel are kept. Older rows are removed by step 6.</li>
+    <li><strong>Transcripts or video files.</strong> Only titles and descriptions.</li>
+    <li><strong>Your Google token.</strong> That lives in <code>~/.bys/token.json</code>, outside the database.</li>
+  </ul>
+  <p>The <code>synced_at</code> column records when a channel was last fetched. <code>model</code> records which model made each vector, so you can tell whether a re-embed is needed after switching models.</p>
+</section>
+
+<section id="example">
+  <h2>Worked example</h2>
+  <p class="lead">One channel, followed through every step. The input is made up; the profile text is real output from the project's <code>build_profile</code> function.</p>
+
+  <h3>Input from YouTube</h3>
+  <div class="card">
+    <p><strong>Channel</strong> <code>UCgopher</code>, title <em>Gopher Academy</em>, uploads playlist <code>UUgopher</code>.</p>
+    <p><strong>Description:</strong> <em>Tutorials on the Go programming language. Subscribe! https://example.com/join</em></p>
+    <table class="example-table">
+      <thead><tr><th>Video</th><th>Title</th><th>Description</th><th>Published</th></tr></thead>
+      <tbody>
+        <tr><td><code>v3</code></td><td>Go generics deep dive</td><td>In this video we cover type parameters. Sponsor: https://sponsor.example</td><td>2026-03-03</td></tr>
+        <tr><td><code>v2</code></td><td>Writing a REST API in Go</td><td>Building an HTTP server with net/http.</td><td>2026-02-10</td></tr>
+        <tr><td><code>v1</code></td><td>Goroutines and channels explained</td><td><em>(empty)</em></td><td>2026-01-05</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>After step 6: rows in SQLite</h3>
+  <div class="split">
+    <div class="card">
+      <h4>channels</h4>
+      <table class="example-table">
+        <tr><th>id</th><td><code>UCgopher</code></td></tr>
+        <tr><th>title</th><td>Gopher Academy</td></tr>
+        <tr><th>uploads_playlist_id</th><td><code>UUgopher</code></td></tr>
+        <tr><th>synced_at</th><td>2026-11-25T09:00:00+00:00</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h4>videos (3 rows, all with channel_id = UCgopher)</h4>
+      <table class="example-table">
+        <thead><tr><th>id</th><th>title</th></tr></thead>
+        <tbody>
+          <tr><td><code>v3</code></td><td>Go generics deep dive</td></tr>
+          <tr><td><code>v2</code></td><td>Writing a REST API in Go</td></tr>
+          <tr><td><code>v1</code></td><td>Goroutines and channels explained</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <h3>After step 7: the profile text</h3>
+  <pre><code>Gopher Academy. Tutorials on the Go programming language. Subscribe! Recent videos: Go generics deep dive | Writing a REST API in Go | Goroutines and channels explained. In this video we cover type parameters. Sponsor: Building an HTTP server with net/http.</code></pre>
+
+  <p>Look at what changed from the input:</p>
+  <ul>
+    <li>The URL in the channel description (<code>https://example.com/join</code>) is gone.</li>
+    <li>The sponsor URL is gone, but the words <em>“Sponsor:”</em> remain. Cleaning removes links, not boilerplate. That is a known limitation, and it's a reason to tune the cleaning later.</li>
+    <li>The empty description of <code>v1</code> adds nothing, so it is skipped.</li>
+    <li>The titles are joined with <code> | </code>, so the model can see them as separate items.</li>
+  </ul>
+
+  <h3>Steps 8 to 10</h3>
+  <ul>
+    <li><strong>Step 8:</strong> there is no stored profile for <code>UCgopher</code> yet, so it is pending.</li>
+    <li><strong>Step 9:</strong> the text above goes to the model with the other pending profiles. The result is 384 numbers.</li>
+    <li><strong>Step 10:</strong> the row <code>embeddings(channel_id = UCgopher, profile = …, model = bge-small-en-v1.5, vector = …)</code> is inserted.</li>
+  </ul>
+
+  <h3>Later, when you search</h3>
+  <p>The query <em>“the guys who make videos about golang”</em> is embedded the same way, and its vector is compared with every stored vector. Gopher Academy should score highest. That part is covered by <code>bys search</code>, not by sync, but it depends on the vectors this page describes.</p>
+</section>
+
+<section id="rerun">
+  <h2>Re-runs: what gets re-embedded?</h2>
+  <p class="lead">Sync can run again at any time. Only what changed is re-embedded.</p>
+
+  <table>
+    <thead><tr><th>Situation</th><th>What sync does</th><th>Model called?</th></tr></thead>
+    <tbody>
+      <tr><td>First ever sync</td><td>Every channel is new: all profiles are pending.</td><td>Yes, for all</td></tr>
+      <tr><td>Nothing changed since yesterday</td><td>Profiles match the stored ones. Nothing is pending.</td><td>No</td></tr>
+      <tr><td>One channel uploaded a video</td><td>Its last-5 list changes, so its profile changes.</td><td>Yes, for that channel</td></tr>
+      <tr><td>A video description was edited</td><td>The description snippet is part of the profile, so the profile changes.</td><td>Yes, for that channel</td></tr>
+      <tr><td>You unsubscribed from a channel</td><td>Step 4 deletes its row. The embedding is deleted by cascade.</td><td>No</td></tr>
+      <tr><td>You subscribed to a new channel</td><td>New row, new profile, nothing stored yet.</td><td>Yes, for that channel</td></tr>
+      <tr><td>A channel's fetch failed this time</td><td>It is not in <code>profiles</code>, so it is not pending. Its old vector stays.</td><td>No</td></tr>
+    </tbody>
+  </table>
+
+  <h4>The decision for each channel</h4>
+  <div class="flow">
+    <span class="node">Build profile</span><span class="arrow">→</span>
+    <span class="node">Stored profile exists?</span><span class="arrow">→</span>
+    <span class="node no">No</span><span class="arrow">→</span>
+    <span class="node yes">Embed</span>
+  </div>
+  <div class="flow">
+    <span class="node">Stored profile exists?</span><span class="arrow">→</span>
+    <span class="node yes">Yes, same text</span><span class="arrow">→</span>
+    <span class="node">Keep vector</span>
+  </div>
+  <div class="flow">
+    <span class="node">Stored profile exists?</span><span class="arrow">→</span>
+    <span class="node no">Yes, different text</span><span class="arrow">→</span>
+    <span class="node yes">Embed</span>
+  </div>
+</section>
+
+<section id="failures">
+  <h2>Failure handling</h2>
+  <p class="lead">Failures are handled at the smallest level that makes sense. A problem with one channel never stops the others.</p>
+
+  <table>
+    <thead><tr><th>Level</th><th>Example</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td><span class="tag api" style="margin:0">Global, fatal</span></td><td>No token, bad token, <code>subscriptions.list</code> fails, model fails to load</td><td>Sync stops with an error. Nothing after that step runs.</td></tr>
+      <tr><td><span class="tag db" style="margin:0">Batch</span></td><td><code>channels.list</code> returns an error for 50 IDs</td><td>Those 50 IDs are logged. The next batch runs.</td></tr>
+      <tr><td><span class="tag profile" style="margin:0">Channel</span></td><td>403 on a channel's uploads playlist, or a database error while saving it</td><td>The channel's changes are rolled back, the failure is logged, and the next channel runs.</td></tr>
+      <tr><td><span class="tag model" style="margin:0">Not a failure</span></td><td>404 on the uploads playlist (no public uploads)</td><td>The channel is saved with no videos and its profile is built from the description.</td></tr>
+      <tr><td><span class="tag db" style="margin:0">Missing</span></td><td>An ID is not returned by <code>channels.list</code></td><td>Logged as “not returned by the YouTube API”.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Where the failures go</h3>
+  <ul>
+    <li><strong>Console:</strong> a <em>failed:</em> line right after the channel's progress line, and a summary at the end.</li>
+    <li><strong>Log file:</strong> <code>~/.bys/sync-failures.log</code>, appended on every run, one line per failure:</li>
+  </ul>
+  <pre><code>2026-11-25T09:00:12+00:00	Karting Pro (UCxxxx)	HTTP 403: forbidden</code></pre>
+  <p>The log is append-only, so you can see the history of a channel that keeps failing. A channel that appears in every run is a good candidate for a closer look.</p>
+  <div class="callout warn">The sync exits with status 0 even when some channels failed. A partial sync is still a success from the database's point of view. Check the summary, or the log, to see what was skipped.</div>
+</section>
+
+<section id="profile-rules">
+  <h2>Profile rules</h2>
+  <p class="lead">These limits are in <code>src/bys/profiles.py</code>. They keep the profile inside the model's input size.</p>
+  <table>
+    <thead><tr><th>Rule</th><th>Value</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Remove URLs</td><td>any <code>http(s)://</code> or <code>www.</code> link</td><td>Links are noise to the model and can be very long.</td></tr>
+      <tr><td>Collapse whitespace</td><td>runs of spaces, tabs and newlines → one space</td><td>Keeps the text compact.</td></tr>
+      <tr><td>Channel description cap</td><td>500 characters</td><td>Enough to say what the channel is about.</td></tr>
+      <tr><td>Video description snippet cap</td><td>150 characters each</td><td>The start of a description usually says what the video is about.</td></tr>
+      <tr><td>Total profile cap</td><td>1500 characters</td><td>The model reads at most about 512 tokens. Anything after that is ignored anyway.</td></tr>
+      <tr><td>Truncation point</td><td>at a word boundary, with <code>...</code></td><td>Avoids cutting a word in half.</td></tr>
+      <tr><td>Order</td><td>name → channel description → titles → snippets</td><td>Titles are the most specific signal, so they come before the snippets, which get cut first.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout">Titles come before the snippets, but after the channel description. If the channel description takes the full 500 characters, the titles still fit inside the 1500 total. The rule is about what survives truncation, not what is first in the text.</div>
+</section>
+
+<section id="glossary">
+  <h2>Glossary</h2>
+  <table>
+    <tbody>
+      <tr><th>Subscription</th><td>Your follow of a channel. Stored as the channel's row in <code>channels</code>.</td></tr>
+      <tr><th>Uploads playlist</th><td>A YouTube playlist that lists every public video of a channel, newest first. Its ID starts with <code>UU</code>.</td></tr>
+      <tr><th>Quota unit</th><td>YouTube's budget unit. Most read calls cost 1; the default daily budget is 10,000.</td></tr>
+      <tr><th>Pagination</th><td>The API returns results in pages. Use the <code>nextPageToken</code> to get the next one.</td></tr>
+      <tr><th>Profile</th><td>The plain text that describes a channel, built in step 7.</td></tr>
+      <tr><th>Embedding</th><td>A list of numbers that represents the meaning of a text. Similar texts get similar numbers.</td></tr>
+      <tr><th>Vector</th><td>The same as an embedding here: 384 numbers, stored as a BLOB.</td></tr>
+      <tr><th>Normalized</th><td>Scaled so the vector has length 1. Then the dot product of two vectors is their cosine similarity.</td></tr>
+      <tr><th>Upsert</th><td>Insert the row, or update it if the key already exists. The SQL <code>ON CONFLICT … DO UPDATE</code>.</td></tr>
+      <tr><th>Commit / rollback</th><td>Commit makes a group of changes permanent. Rollback throws away the uncommitted ones.</td></tr>
+      <tr><th>Foreign key, cascade</th><td>A column that points at another table's key. <code>ON DELETE CASCADE</code> deletes the dependent rows automatically.</td></tr>
+      <tr><th>Batch</th><td>Several IDs sent in one API call. The channel lookup uses batches of 50.</td></tr>
+      <tr><th>fastembed</th><td>A Python library that runs embedding models with ONNX Runtime, without PyTorch.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<footer>
+  Generated from the code in <code>src/bys/</code>: <code>sync.py</code>, <code>youtube.py</code>, <code>db.py</code>, <code>profiles.py</code>, <code>embed.py</code>, <code>auth.py</code>, <code>cli.py</code>. If the code changes, this page should change with it.
+</footer>
+
+</main>
+</div>
+
+<script>
+  // Highlight the pipeline box for the step currently in view.
+  const steps = document.querySelectorAll('.step');
+  const nodes = document.querySelectorAll('.pipeline a');
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      const index = [...steps].indexOf(entry.target);
+      nodes.forEach((node, i) => node.classList.toggle('active', i === index));
+      steps.forEach((step) => step.classList.toggle('target', step === entry.target));
+    });
+  }, { rootMargin: '-40% 0px -50% 0px' });
+  steps.forEach((step) => observer.observe(step));
+</script>
+</body>
+</html>
